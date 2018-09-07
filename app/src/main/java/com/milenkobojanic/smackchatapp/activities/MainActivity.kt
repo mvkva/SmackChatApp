@@ -19,6 +19,7 @@ import android.widget.EditText
 import com.milenkobojanic.smackchatapp.R
 import com.milenkobojanic.smackchatapp.SmackChatApp
 import com.milenkobojanic.smackchatapp.model.Channel
+import com.milenkobojanic.smackchatapp.model.Message
 import com.milenkobojanic.smackchatapp.services.AuthService
 import com.milenkobojanic.smackchatapp.services.MessageService
 import com.milenkobojanic.smackchatapp.services.UserDataService
@@ -48,6 +49,7 @@ class MainActivity : AppCompatActivity() {
         setSupportActionBar(toolbar)
         socket.connect()
         socket.on("channelCreated", onNewChannel)
+        socket.on("messageCreated", onNewMessage)
 
         val toggle = ActionBarDrawerToggle(
                 this, drawer_layout, toolbar, R.string.navigation_drawer_open, R.string.navigation_drawer_close)
@@ -102,6 +104,16 @@ class MainActivity : AppCompatActivity() {
 
     fun updateWithChannel() {
         mainChannelName.text = "#${selectedChannel?.name}"
+
+        if (selectedChannel != null) {
+            MessageService.getMessages(selectedChannel!!.id) {complete ->
+                if (complete) {
+                    for (message in MessageService.messages) {
+                        println(message.message)
+                    }
+                }
+            }
+        }
     }
 
     override fun onBackPressed() {
@@ -153,19 +165,48 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val onNewChannel = Emitter.Listener {args ->
-        runOnUiThread{
-            val channelName = args[0] as String
-            val channelDescription = args[1] as String
-            val channelId = args[2] as String
+        if(SmackChatApp.prefs.isLoggedIn) {
+            runOnUiThread{
+                val channelName = args[0] as String
+                val channelDescription = args[1] as String
+                val channelId = args[2] as String
 
-            val newChannel = Channel(channelName, channelDescription, channelId)
-            MessageService.channels.add(newChannel)
-            channelAdapter.notifyDataSetChanged()
+                val newChannel = Channel(channelName, channelDescription, channelId)
+                MessageService.channels.add(newChannel)
+                channelAdapter.notifyDataSetChanged()
+            }
+        }
+    }
+
+    private val onNewMessage = Emitter.Listener { args ->
+        if(SmackChatApp.prefs.isLoggedIn) {
+            runOnUiThread {
+                val channelId = args[2] as String
+
+                if (channelId == selectedChannel?.id){
+                    val msgBody = args[0] as String
+                    val userName = args[3] as String
+                    val userAvatar = args[4] as String
+                    val userAvatarColor = args[5] as String
+                    val id = args[6] as String
+                    val timeStamp = args[7] as String
+
+                    val newMessage = Message(msgBody, userName, channelId, userAvatar, userAvatarColor, id, timeStamp)
+                    MessageService.messages.add(newMessage)
+                }
+            }
         }
     }
 
     fun sendMessageButtonClicked(view: View) {
-        hideKeyboard()
+        if(SmackChatApp.prefs.isLoggedIn && messageTextField.text.isNotEmpty() && selectedChannel != null) {
+            val userId = UserDataService.id
+            val channelId = selectedChannel?.id
+            socket.emit("newMessage", messageTextField.text.toString(), userId, channelId,
+                        UserDataService.name, UserDataService.avatarName, UserDataService.avatarColor)
+            messageTextField.text.clear()
+            hideKeyboard()
+        }
     }
 
     fun hideKeyboard() {
