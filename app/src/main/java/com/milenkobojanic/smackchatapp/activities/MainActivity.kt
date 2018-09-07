@@ -11,13 +11,14 @@ import android.support.v4.view.GravityCompat
 import android.support.v7.app.ActionBarDrawerToggle
 import android.support.v7.app.AlertDialog
 import android.support.v7.app.AppCompatActivity
+import android.support.v7.widget.LinearLayoutManager
 import android.view.View
 import android.view.inputmethod.InputMethodManager
-import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.EditText
 import com.milenkobojanic.smackchatapp.R
 import com.milenkobojanic.smackchatapp.SmackChatApp
+import com.milenkobojanic.smackchatapp.adapters.MessageAdapter
 import com.milenkobojanic.smackchatapp.model.Channel
 import com.milenkobojanic.smackchatapp.model.Message
 import com.milenkobojanic.smackchatapp.services.AuthService
@@ -36,11 +37,17 @@ class MainActivity : AppCompatActivity() {
 
     val socket = IO.socket(SOCKET_URL)
     lateinit var channelAdapter: ArrayAdapter<Channel>
-    var selectedChannel : Channel? = null
+    lateinit var messageAdapter: MessageAdapter
+    var selectedChannel: Channel? = null
 
     private fun setUpAdapters() {
         channelAdapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, MessageService.channels)
         channel_list.adapter = channelAdapter
+
+        messageAdapter = MessageAdapter(this, MessageService.messages)
+        messageListView.adapter = messageAdapter
+        val layoutManager = LinearLayoutManager(this)
+        messageListView.layoutManager = layoutManager
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -57,20 +64,17 @@ class MainActivity : AppCompatActivity() {
         toggle.syncState()
         setUpAdapters()
 
-        channel_list.setOnItemClickListener{_, _, position, _ ->
+        LocalBroadcastManager.getInstance(this).registerReceiver(userDataChangeReceiver, IntentFilter(BROADCAST_USER_DATA_CHANGE))
+
+        channel_list.setOnItemClickListener { _, _, position, _ ->
             selectedChannel = MessageService.channels[position]
             drawer_layout.closeDrawer(GravityCompat.START)
             updateWithChannel()
         }
 
         if (SmackChatApp.prefs.isLoggedIn) {
-            AuthService.findUserByEmail(this){}
+            AuthService.findUserByEmail(this) {}
         }
-    }
-
-    override fun onResume() {
-        LocalBroadcastManager.getInstance(this).registerReceiver(userDataChangeReceiver, IntentFilter(BROADCAST_USER_DATA_CHANGE))
-        super.onResume()
     }
 
     override fun onDestroy() {
@@ -89,7 +93,7 @@ class MainActivity : AppCompatActivity() {
                 userImageNavHeader.setBackgroundColor(UserDataService.returnAvatarColor(UserDataService.avatarColor))
                 loginButtonNavHeader.text = "Logout"
 
-                MessageService.getChannels {complete ->
+                MessageService.getChannels { complete ->
                     if (complete) {
                         if (MessageService.channels.count() > 0) {
                             selectedChannel = MessageService.channels[0]
@@ -106,10 +110,11 @@ class MainActivity : AppCompatActivity() {
         mainChannelName.text = "#${selectedChannel?.name}"
 
         if (selectedChannel != null) {
-            MessageService.getMessages(selectedChannel!!.id) {complete ->
+            MessageService.getMessages(selectedChannel!!.id) { complete ->
                 if (complete) {
-                    for (message in MessageService.messages) {
-                        println(message.message)
+                    messageAdapter.notifyDataSetChanged()
+                    if (messageAdapter.itemCount > 0) {
+                        messageListView.smoothScrollToPosition(messageAdapter.itemCount - 1)
                     }
                 }
             }
@@ -129,11 +134,14 @@ class MainActivity : AppCompatActivity() {
         if (SmackChatApp.prefs.isLoggedIn) {
 
             UserDataService.logout()
+            channelAdapter.notifyDataSetChanged()
+            messageAdapter.notifyDataSetChanged()
             userNameNavHeader.text = ""
             userEmailNavHeader.text = ""
             userImageNavHeader.setImageResource(R.drawable.profiledefault)
             userImageNavHeader.setBackgroundColor(Color.TRANSPARENT)
             loginButtonNavHeader.text = "Login"
+            mainChannelName.text = "Please log in"
 
         } else {
 
@@ -164,9 +172,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private val onNewChannel = Emitter.Listener {args ->
-        if(SmackChatApp.prefs.isLoggedIn) {
-            runOnUiThread{
+    private val onNewChannel = Emitter.Listener { args ->
+        if (SmackChatApp.prefs.isLoggedIn) {
+            runOnUiThread {
                 val channelName = args[0] as String
                 val channelDescription = args[1] as String
                 val channelId = args[2] as String
@@ -179,11 +187,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private val onNewMessage = Emitter.Listener { args ->
-        if(SmackChatApp.prefs.isLoggedIn) {
+        if (SmackChatApp.prefs.isLoggedIn) {
             runOnUiThread {
                 val channelId = args[2] as String
 
-                if (channelId == selectedChannel?.id){
+                if (channelId == selectedChannel?.id) {
                     val msgBody = args[0] as String
                     val userName = args[3] as String
                     val userAvatar = args[4] as String
@@ -193,13 +201,15 @@ class MainActivity : AppCompatActivity() {
 
                     val newMessage = Message(msgBody, userName, channelId, userAvatar, userAvatarColor, id, timeStamp)
                     MessageService.messages.add(newMessage)
+                    messageAdapter.notifyDataSetChanged()
+                    messageListView.smoothScrollToPosition(messageAdapter.itemCount - 1)
                 }
             }
         }
     }
 
     fun sendMessageButtonClicked(view: View) {
-        if(SmackChatApp.prefs.isLoggedIn && messageTextField.text.isNotEmpty() && selectedChannel != null) {
+        if (SmackChatApp.prefs.isLoggedIn && messageTextField.text.isNotEmpty() && selectedChannel != null) {
             val userId = UserDataService.id
             val channelId = selectedChannel?.id
             socket.emit("newMessage", messageTextField.text.toString(), userId, channelId,
@@ -212,7 +222,7 @@ class MainActivity : AppCompatActivity() {
     fun hideKeyboard() {
         val inputManager = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
 
-        if(inputManager.isAcceptingText) {
+        if (inputManager.isAcceptingText) {
             inputManager.hideSoftInputFromWindow(currentFocus.windowToken, 0)
         }
     }
